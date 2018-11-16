@@ -58,9 +58,10 @@ struct DnDOriginator : Client
 
     void start_drag(struct wl_surface* icon)
     {
-        int  static const a_serial = 0; // TODO we need a real, current serial
-        wl_data_device_start_drag(device, source, surface, icon, a_serial);
+        wl_data_device_start_drag(device, source, surface, icon, drag_serial);
     }
+
+    uint32_t drag_serial{0};
 };
 
 struct MockDataDeviceListener : DataDeviceListener
@@ -100,6 +101,22 @@ struct DragAndDrop : StartedInProcessServer
         // We need some idea where the surfaces are
         the_server().move_surface_to(originator.surface, 0, 0);
         the_server().move_surface_to(target.surface, position_target_x, position_target_y);
+
+        // originator needs a serial number to start the drag gesture
+        bool button_down{false};
+        originator.add_pointer_button_notification([&](uint32_t serial, uint32_t, bool is_down) -> bool 
+            {
+                originator.drag_serial = serial;
+                button_down = is_down;
+                return true;
+            });
+
+        cursor.left_button_down();
+        originator.dispatch_until([&](){ return button_down; });
+
+        originator.offer(any_mime_type);
+        originator.set_actions(any_actions);
+        originator.start_drag(null_icon);
     }
 
     void TearDown() override
@@ -118,12 +135,6 @@ struct DragAndDrop : StartedInProcessServer
 
 TEST_F(DragAndDrop, given_originator_starts_drag_when_cursor_moves_over_target_it_sees_offer)
 {
-    cursor.left_button_down();
-
-    originator.offer(any_mime_type);
-    originator.set_actions(any_actions);
-    originator.start_drag(null_icon);
-
     EXPECT_CALL(mdol, offer(_, StrEq(any_mime_type)));
     EXPECT_CALL(target.listener, data_offer(_,_))
         .WillOnce(Invoke([&](struct wl_data_device*, struct wl_data_offer* id){ mdol.listen_to(id); }));
